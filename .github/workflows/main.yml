@@ -1,0 +1,131 @@
+name: Ti
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    env:
+      PY_COLORS: "1"
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.13"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    # ---------------------------------------------------------
+    # Checkout repository
+    # ---------------------------------------------------------
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # ---------------------------------------------------------
+    # Python setup
+    # ---------------------------------------------------------
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    # ---------------------------------------------------------
+    # Install Brave Browser
+    # ---------------------------------------------------------
+    - name: Install Brave Browser
+      run: |
+        echo "Installing Brave Browser..."
+        sudo apt-get update
+        sudo apt install -y apt-transport-https curl
+        sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
+          https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] \
+          https://brave-browser-apt-release.s3.brave.com/ stable main" \
+          | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+        sudo apt update
+        sudo apt install -y brave-browser
+      shell: bash
+
+    # ---------------------------------------------------------
+    # Install Cloudflare WARP
+    # ---------------------------------------------------------
+    - name: Install WARP
+      run: |
+        echo "Setting up Cloudflare WARP..."
+        sudo apt-get -y update
+        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+          | sudo gpg --yes --dearmor \
+          --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] \
+          https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
+          | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends cloudflare-warp
+
+        sudo warp-cli --accept-tos registration new
+        sudo warp-cli --accept-tos mode warp+doh
+        sudo warp-cli --accept-tos connect
+        sleep 5
+      shell: bash
+
+    # ---------------------------------------------------------
+    # Verify WARP connection
+    # ---------------------------------------------------------
+    - name: Ensure connection is WARP'ed
+      run: |
+        echo "Checking WARP connection..."
+        curl -s https://www.cloudflare.com/cdn-cgi/trace | grep "warp=on"
+      shell: bash
+
+    # ---------------------------------------------------------
+    # Locale setup
+    # ---------------------------------------------------------
+    - name: Set Locale
+      run: |
+        sudo apt-get install tzdata locales -y
+        sudo locale-gen en_US.UTF-8
+        sudo localectl set-locale LANG="en_US.UTF-8"
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        locale -a
+        locale
+        locale -c -k LC_NUMERIC
+        localectl status
+
+    # ---------------------------------------------------------
+    # Python dependencies
+    # ---------------------------------------------------------
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip wheel
+        pip install --upgrade seleniumbase pyautogui pymongo python-xlib
+
+    # ---------------------------------------------------------
+    # Install Chromedriver
+    # ---------------------------------------------------------
+    - name: Install chromedriver
+      run: |
+        seleniumbase install chromedriver
+
+    # ---------------------------------------------------------
+    # Run script
+    # ---------------------------------------------------------
+    - name: Run para.py
+      run: |
+        python para.py --brave --incognito --do-not-track --xvfb --screenshot
+
+    # ---------------------------------------------------------
+    # Upload screenshots
+    # ---------------------------------------------------------
+    - name: Upload screenshots
+      uses: actions/upload-artifact@v4
+      with:
+        name: seleniumbase-screenshots
+        path: ./latest_logs/
